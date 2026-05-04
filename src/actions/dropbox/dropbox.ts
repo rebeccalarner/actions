@@ -32,11 +32,13 @@ export class DropboxAction extends Hub.OAuthAction {
       if (parsedState.cid && parsedState.payload) {
         const stateJson = await this.oauthExtractTokensFromStateJson(request.params.state_json, request.webhookId)
         if (stateJson && stateJson.code && stateJson.redirect) {
-          accessToken = await this.getAccessTokenFromCode(stateJson)
+          const tokenResp = await this.getAccessTokenFromCode(stateJson)
+          accessToken = tokenResp.access_token
         }
       } else {
         if (parsedState.code && parsedState.redirect) {
-          accessToken = await this.getAccessTokenFromCode(parsedState)
+          const tokenResp = await this.getAccessTokenFromCode(parsedState)
+          accessToken = tokenResp.access_token
         }
       }
     }
@@ -75,11 +77,13 @@ export class DropboxAction extends Hub.OAuthAction {
         if (parsedState.cid && parsedState.payload) {
           const stateJson = await this.oauthExtractTokensFromStateJson(request.params.state_json, request.webhookId)
           if (stateJson && stateJson.code && stateJson.redirect) {
-            accessToken = await this.getAccessTokenFromCode(stateJson)
+            const tokenResp = await this.getAccessTokenFromCode(stateJson)
+            accessToken = tokenResp.access_token
           }
         } else {
           if (parsedState.code && parsedState.redirect) {
-            accessToken = await this.getAccessTokenFromCode(parsedState)
+            const tokenResp = await this.getAccessTokenFromCode(parsedState)
+            accessToken = tokenResp.access_token
           }
         }
       } catch { winston.warn("Could not parse state_json") }
@@ -152,6 +156,7 @@ export class DropboxAction extends Hub.OAuthAction {
       redirect_uri: redirectUri,
       force_reapprove: true,
       state: encryptedState,
+      token_access_type: "offline",
     })
     return url.toString()
   }
@@ -168,7 +173,8 @@ export class DropboxAction extends Hub.OAuthAction {
 
     const payload = JSON.parse(plaintext)
 
-    const encrypted = await this.oauthMaybeEncryptTokens({code: urlParams.code, redirect: redirectUri}, undefined)
+    const tokenResponse = await this.getAccessTokenFromCode({code: urlParams.code, redirect: redirectUri})
+    const encrypted = await this.oauthMaybeEncryptTokens(tokenResponse, undefined)
     await https.post({
       url: payload.stateurl,
       body: encrypted,
@@ -202,31 +208,40 @@ export class DropboxAction extends Hub.OAuthAction {
    * to comply with RFC 6749 and avoid leaking secrets in URL logs (b/426567813).
    */
   protected async getAccessTokenFromCode(stateJson: any) {
+    if (!process.env.DROPBOX_ACTION_APP_KEY || !process.env.DROPBOX_ACTION_APP_SECRET) {
+      throw new Error("Dropbox API credentials are missing from environment configuration.")
+    }
     const url = "https://api.dropboxapi.com/oauth2/token"
 
-    if (stateJson.code && stateJson.redirect) {
+    if (stateJson && stateJson.code && stateJson.redirect) {
       const data = {
         grant_type: "authorization_code",
         code: stateJson.code,
-        client_id: process.env.DROPBOX_ACTION_APP_KEY,
-        client_secret: process.env.DROPBOX_ACTION_APP_SECRET,
         redirect_uri: stateJson.redirect,
       }
+
+      const encodedCreds = Buffer.from(
+        `${process.env.DROPBOX_ACTION_APP_KEY}:${process.env.DROPBOX_ACTION_APP_SECRET}`,
+      ).toString("base64")
 
       const response = await gaxios.request<any>({
         method: "POST",
         url,
         data: querystring.stringify(data),
         headers: {
+          "Authorization": `Basic ${encodedCreds}`,
           "Content-Type": "application/x-www-form-urlencoded",
         },
-      }).catch((err) => {
-        winston.error(`OAuth token exchange failed: ${err.message}`)
+        timeout: 15000,
+      }).catch((err: any) => {
+        const errorBody = err.response && err.response.data ? JSON.stringify(err.response.data) : "No error body"
+        winston.error(`OAuth token exchange failed: ${err.message}. Response: ${errorBody}`)
         throw err
       })
-      return response.data.access_token
+      // Return the raw response object containing BOTH access_token and refresh_token
+      return response.data
     } else {
-      throw "state_json does not contain correct members"
+      throw new Error("Authorization code or redirect URI are missing from stateJson.")
     }
   }
 
