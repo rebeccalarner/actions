@@ -174,6 +174,7 @@ export class DropboxAction extends Hub.OAuthAction {
     const payload = JSON.parse(plaintext)
 
     const tokenResponse = await this.getAccessTokenFromCode({code: urlParams.code, redirect: redirectUri})
+    // TODO: Store refresh_token in state and implement refresh flow to handle 4-hour token expiry
     const encrypted = await this.oauthMaybeEncryptTokens(tokenResponse, undefined)
     await https.post({
       url: payload.stateurl,
