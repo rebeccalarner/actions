@@ -64,8 +64,3 @@ typings/
 
 # ActionHub specifics
 status.json
-
-# Internal Tooling
-.agent/
-.gemini/
-tasks/
