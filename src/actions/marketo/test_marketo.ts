@@ -231,6 +231,10 @@ import { MarketoTransaction } from "./marketo_transaction"
         })
       })
 
+      after(() => {
+        sinon.restore()
+      })
+
       it("sends all the data to Marketo for the legacy request format", () => {
         const request = new Hub.ActionRequest()
         Object.assign(request, sampleTypeParamsAttachment)
